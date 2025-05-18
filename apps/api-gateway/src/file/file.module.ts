@@ -29,7 +29,7 @@ import { ConfigModule } from '@nestjs/config';
     {
       provide: MINIO_CLIENT,
       useValue: new S3Client({
-        endpoint: 'http://localhost:9000',
+        endpoint: process.env.MINIO_ENDPOINT || 'http://localhost:9000',
         region: 'us-east-1',
         credentials: {
           accessKeyId: 'minioadmin',
