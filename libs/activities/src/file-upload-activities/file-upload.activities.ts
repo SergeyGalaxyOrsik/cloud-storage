@@ -8,7 +8,7 @@ import { Repository } from 'typeorm';
 import { FileUploadWorkflowParams } from '@app/workflows/types';
 import { AppDataSource } from '../database/data-source';
 import { EncryptionService } from '@app/encryption/encryption.service';
-import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, S3Client, PutObjectCommand, ListBucketsCommand, CreateBucketCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 import { MINIO_CLIENT } from '../minio/minio.module';
 import * as zlib from 'zlib';
@@ -166,12 +166,34 @@ export class FileUploadActivities {
     await this.redisService?.setChunk(`${file.fileKey}-${index}`, encrypted.toString('base64'));
   }
 
+  private async ensureChunksBucketExists(): Promise<void> {
+    try {
+      // Check if bucket already exists
+      const { Buckets } = await this.s3.send(new ListBucketsCommand({}));
+      const bucketExists = Buckets?.some(bucket => bucket.Name === 'chunks-storage');
+      
+      if (!bucketExists) {
+        // Create bucket if it doesn't exist
+        await this.s3.send(new CreateBucketCommand({
+          Bucket: 'chunks-storage'
+        }));
+        console.log('Created chunks-storage bucket in MinIO');
+      }
+    } catch (error) {
+      console.error('Error ensuring chunks bucket exists:', error);
+      throw error;
+    }
+  }
+
   public async sendFiles(
     file: FileUploadWorkflowParams['file'],
     userId: string,
     chunksSize: number,
   ): Promise<any> {
     const STORAGE_ROOT = path.resolve(__dirname, '..', 'uploads');
+    
+    // Ensure the chunks-storage bucket exists
+    await this.ensureChunksBucketExists();
     
     const onlineDevices =
       (await this.redisService?.getAllOnlineDevices()) || [];
@@ -228,11 +250,15 @@ export class FileUploadActivities {
           });
           console.log('chunk sent to device:', targetDevice.deviceId);
         } else {
-          const absPath = path.join(STORAGE_ROOT, chunkId);
-          await fs.mkdir(path.dirname(absPath), { recursive: true });
+          // Store in MinIO instead of filesystem
           if (chunk) {
             const buffer = Buffer.from(chunk);
-            await fs.writeFile(absPath, buffer);
+            // Upload to MinIO
+            await this.s3.send(new PutObjectCommand({
+              Bucket: 'chunks-storage',
+              Key: chunkId,
+              Body: buffer
+            }));
           }
           chunksData.push({
             chunkId,
@@ -241,11 +267,15 @@ export class FileUploadActivities {
           });
         }
       } else {
-        const absPath = path.join(STORAGE_ROOT, chunkId);
-        await fs.mkdir(path.dirname(absPath), { recursive: true });
+        // Store in MinIO instead of filesystem
         if (chunk) {
           const buffer = Buffer.from(chunk);
-          await fs.writeFile(absPath, buffer);
+          // Upload to MinIO
+          await this.s3.send(new PutObjectCommand({
+            Bucket: 'chunks-storage',
+            Key: chunkId,
+            Body: buffer
+          }));
         }
         chunksData.push({
           chunkId,

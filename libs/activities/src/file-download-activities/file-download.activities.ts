@@ -8,7 +8,7 @@ import { Repository } from 'typeorm';
 import { FileDownloadWorkflowParams } from '@app/workflows/types';
 import { AppDataSource } from '../database/data-source';
 import { EncryptionService } from '@app/encryption/encryption.service';
-import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, S3Client, ListBucketsCommand, CreateBucketCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 import { MINIO_CLIENT } from '../minio/minio.module';
 import * as zlib from 'zlib';
@@ -58,8 +58,34 @@ export class FileDownloadActivities {
     return chunksInfo
   }
 
+  private async ensureChunksBucketExists(): Promise<void> {
+    try {
+      if (!this.s3Client) {
+        throw new Error('S3 client is not initialized');
+      }
+      
+      // Check if bucket already exists
+      const { Buckets } = await this.s3Client.send(new ListBucketsCommand({}));
+      const bucketExists = Buckets?.some(bucket => bucket.Name === 'chunks-storage');
+      
+      if (!bucketExists) {
+        // Create bucket if it doesn't exist
+        await this.s3Client.send(new CreateBucketCommand({
+          Bucket: 'chunks-storage'
+        }));
+        console.log('Created chunks-storage bucket in MinIO');
+      }
+    } catch (error) {
+      console.error('Error ensuring chunks bucket exists:', error);
+      throw error;
+    }
+  }
+
   public async downloadChunks(fileKey: string, userId: string, deviceId: string) {
     try {
+      // Ensure the chunks-storage bucket exists
+      await this.ensureChunksBucketExists();
+      
       // 1. Get chunks information from the database
       const chunksInfo = await this.getChunksInfo(fileKey, userId);
       if (!chunksInfo || chunksInfo.length === 0) {
@@ -88,18 +114,40 @@ export class FileDownloadActivities {
       for (const chunkInfo of chunksInfo) {
         const { chunkId, deviceId: chunkDeviceId, userId: chunkUserId } = chunkInfo;
         
-        // If chunk is stored on the server, read from filesystem
+        // If chunk is stored on the server, retrieve from MinIO
         if (chunkDeviceId === 'server' && chunkUserId === 'server') {
-          const chunkPath = path.join(STORAGE_ROOT, chunkId);
           try {
-            const chunkBuffer = await fs.readFile(chunkPath);
+            // Retrieve chunk from MinIO instead of filesystem
+            if (!this.s3Client) {
+              throw new Error('S3 client is not initialized');
+            }
+            
+            const getObjectCommand = new GetObjectCommand({
+              Bucket: 'chunks-storage',
+              Key: chunkId
+            });
+            
+            const response = await this.s3Client.send(getObjectCommand);
+            if (!response.Body) {
+              throw new Error(`No data in chunk: ${chunkId}`);
+            }
+            
+            const stream = response.Body as Readable;
+            const chunks: Buffer[] = [];
+            
+            // Convert stream to buffer
+            await new Promise<void>((resolve, reject) => {
+              stream.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+              stream.on('end', () => resolve());
+              stream.on('error', reject);
+            });
+            
+            const chunkBuffer = Buffer.concat(chunks);
             
             // 4. Send the chunk to the requesting device via websocket
             if (this.websocketClient) {
               // Ensure the buffer is properly encoded as base64 string
-              const base64Buffer = Buffer.isBuffer(chunkBuffer) 
-                ? chunkBuffer.toString('base64')
-                : Buffer.from(chunkBuffer).toString('base64');
+              const base64Buffer = chunkBuffer.toString('base64');
               
               this.websocketClient.emit('chunk', {
                 buffer: base64Buffer,
@@ -111,7 +159,7 @@ export class FileDownloadActivities {
               console.log(`Server chunk sent to device: ${deviceId}`);
             }
           } catch (error) {
-            console.error(`Error reading chunk from server: ${error.message}`);
+            console.error(`Error reading chunk from MinIO: ${error.message}`);
             continue; // Try next chunk even if this one fails
           }
         } 
