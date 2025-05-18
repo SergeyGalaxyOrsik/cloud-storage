@@ -19,6 +19,7 @@ export class FileController {
         mimetype: string;
         size: number;
         buffer: string; // base64
+        fileKey: string;
       };
       userId: string;
     },

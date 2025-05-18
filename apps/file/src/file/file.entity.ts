@@ -19,6 +19,9 @@ export class File {
   @Column()
   userId: string;
 
+  @Column()
+  fileKey: string;
+
   @CreateDateColumn()
   createdAt: Date;
 

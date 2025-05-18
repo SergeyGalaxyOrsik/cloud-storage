@@ -29,6 +29,7 @@ export class FileService {
       mimetype: string;
       size: number;
       buffer: string; // base64
+      fileKey: string;
     },
     userId: string,
   ): Promise<File> {
@@ -40,6 +41,7 @@ export class FileService {
       size: file.size,
       storagePath: `user-${userId}/${id}`, // virtual path
       userId,
+      fileKey: file.fileKey,
     });
 
     const saved = await this.fileRepo.save(fileEntity);

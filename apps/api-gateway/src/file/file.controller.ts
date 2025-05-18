@@ -77,6 +77,7 @@ export class FileController {
         mimetype: file.mimetype,
         size: file.size,
         buffer: file.buffer.toString('base64'), // нужно сериализовать
+        fileKey: fileKey,
         },
         userId: body.userId,
     }).pipe(timeout(3000))
