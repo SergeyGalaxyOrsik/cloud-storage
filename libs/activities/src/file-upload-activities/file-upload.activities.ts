@@ -269,11 +269,11 @@ export class FileUploadActivities {
 }
 
 const s3Client = new S3Client({
-  endpoint: 'http://localhost:9000', // или адрес MinIO в docker-сети
+  endpoint: process.env.MINIO_ENDPOINT || 'http://localhost:9000', // или адрес MinIO в docker-сети
   region: 'us-east-1',
   credentials: {
-    accessKeyId: 'minioadmin',
-    secretAccessKey: 'minioadmin123',
+    accessKeyId: process.env.MINIO_ACCESS_KEY || 'minioadmin',
+    secretAccessKey: process.env.MINIO_SECRET_KEY || 'minioadmin123',
   },
   forcePathStyle: true,
 });
