@@ -36,7 +36,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${AUTH_DB_USER:-user}"]
+      test: ["CMD-SHELL", "pg_isready -U ${AUTH_DB_USER:-user} -d ${AUTH_DB_NAME:-authdb}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -54,7 +54,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${FILE_DB_USER:-user}"]
+      test: ["CMD-SHELL", "pg_isready -U ${FILE_DB_USER:-user} -d ${FILE_DB_NAME:-filedb}"]
       interval: 10s
       timeout: 5s
       retries: 5
