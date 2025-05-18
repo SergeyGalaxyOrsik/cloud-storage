@@ -1,0 +1,224 @@
+// file-upload.activities.ts
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import { Injectable, Inject } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { FileKey } from '../entities/file-keys.entity';
+import { Repository } from 'typeorm';
+import { FileDownloadWorkflowParams } from '@app/workflows/types';
+import { AppDataSource } from '../database/data-source';
+import { EncryptionService } from '@app/encryption/encryption.service';
+import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { Readable } from 'stream';
+import { MINIO_CLIENT } from '../minio/minio.module';
+import * as zlib from 'zlib';
+import {
+  ClientProxy,
+  ClientProxyFactory,
+  Transport,
+} from '@nestjs/microservices';
+import { timeout } from 'rxjs/operators';
+import { firstValueFrom } from 'rxjs';
+import * as crypto from 'crypto';
+import { v4 as uuid } from 'uuid';
+import { RedisService } from '@app/redis/redis.service';
+import { ChunkData } from '@app/common';
+import { FileChunks } from 'apps/file/src/file/file-chunks.entity';
+import * as dotenv from 'dotenv';
+dotenv.config();
+
+const CHUNK_SIZE = 512 * 1024; // 512KB chunks
+
+function derToPem(derBase64: string): string {
+  const der = derBase64.match(/.{1,64}/g)?.join('\n');
+  return `-----BEGIN PUBLIC KEY-----\n${der}\n-----END PUBLIC KEY-----`;
+}
+
+@Injectable()
+export class FileDownloadActivities {
+  constructor(
+    @InjectRepository(FileKey)
+    private readonly fileKeyRepository: Repository<FileKey>,
+    @InjectRepository(FileChunks)
+    private readonly fileChunksRepository: Repository<FileChunks>,
+    private readonly redisService?: RedisService,
+    private readonly websocketClient?: ClientProxy,
+    @Inject(MINIO_CLIENT)
+    private readonly s3Client?: S3Client,
+    @Inject('AUTH_SERVICE')
+    private readonly authClient?: ClientProxy,
+    @Inject('FILE_SERVICE')
+    private readonly fileClient?: ClientProxy,
+    private readonly encryptionService?: EncryptionService,
+  ) {}
+
+  public async getChunksInfo(fileKey: string, userId: string) {
+    const response = await this.fileChunksRepository.findOne({where: {fileId: fileKey, userId}})
+    const chunksInfo = response?.chunks
+    return chunksInfo
+  }
+
+  public async downloadChunks(fileKey: string, userId: string, deviceId: string) {
+    try {
+      // 1. Get chunks information from the database
+      const chunksInfo = await this.getChunksInfo(fileKey, userId);
+      if (!chunksInfo || chunksInfo.length === 0) {
+        throw new Error(`No chunks found for file: ${fileKey}`);
+      }
+
+      // 2. Get the encryption key for decryption
+      if (!this.fileClient) {
+        throw new Error('File client is not initialized');
+      }
+      
+      const keyData = await firstValueFrom(
+        this.fileClient.send(
+          { cmd: 'file.getKey' }, 
+          { fileKey, deviceId, userId }
+        ).pipe(timeout(10000))
+      );
+
+      if (!keyData || !keyData.key) {
+        throw new Error(`No encryption key found for file: ${fileKey}`);
+      }
+
+      const STORAGE_ROOT = path.resolve(__dirname, '..', 'uploads');
+      
+      // 3. Process each chunk based on its location (device or server)
+      for (const chunkInfo of chunksInfo) {
+        const { chunkId, deviceId: chunkDeviceId, userId: chunkUserId } = chunkInfo;
+        
+        // If chunk is stored on the server, read from filesystem
+        if (chunkDeviceId === 'server' && chunkUserId === 'server') {
+          const chunkPath = path.join(STORAGE_ROOT, chunkId);
+          try {
+            const chunkBuffer = await fs.readFile(chunkPath);
+            
+            // 4. Send the chunk to the requesting device via websocket
+            if (this.websocketClient) {
+              // Ensure the buffer is properly encoded as base64 string
+              const base64Buffer = Buffer.isBuffer(chunkBuffer) 
+                ? chunkBuffer.toString('base64')
+                : Buffer.from(chunkBuffer).toString('base64');
+              
+              this.websocketClient.emit('chunk', {
+                buffer: base64Buffer,
+                chunkId,
+                deviceId, // Target device that requested the download
+                userId,
+                isDownload: true, // Flag to indicate this is for download
+              });
+              console.log(`Server chunk sent to device: ${deviceId}`);
+            }
+          } catch (error) {
+            console.error(`Error reading chunk from server: ${error.message}`);
+            continue; // Try next chunk even if this one fails
+          }
+        } 
+        // If chunk is stored on another device, request it
+        else if (chunkDeviceId !== 'server') {
+          // Check if the source device is online
+          const isOnline = await this.redisService?.isOnline(chunkUserId, chunkDeviceId);
+          
+          if (isOnline) {
+            // Request the chunk from the source device
+            this.websocketClient?.emit('requestChunk', {
+              chunkId,
+              sourceDeviceId: chunkDeviceId,
+              sourceUserId: chunkUserId,
+              targetDeviceId: deviceId,
+              targetUserId: userId,
+              fileKey,
+            });
+            console.log(`Requested chunk from device: ${chunkDeviceId}`);
+          } else {
+            console.error(`Source device ${chunkDeviceId} is offline, cannot retrieve chunk`);
+            // Could implement fallback or retry logic here
+          }
+        }
+      }
+      
+      return { message: 'success', chunksCount: chunksInfo.length };
+    } catch (error) {
+      console.error(`Error in downloadChunks: ${error.message}`);
+      throw error;
+    }
+  }
+}
+
+const websocketClient = ClientProxyFactory.create({
+  transport: Transport.RMQ,
+  options: {
+    urls: [process.env.RABBITMQ_URL || 'amqp://guest:guest@localhost:5672'],
+    queue: 'websocket_queue',
+    queueOptions: { durable: true },
+  },
+});
+
+const authClient = ClientProxyFactory.create({
+  transport: Transport.RMQ,
+  options: {
+    urls: [process.env.RABBITMQ_URL || 'amqp://guest:guest@localhost:5672'],
+    queue: 'auth_queue',
+    queueOptions: { durable: true },
+  },
+});
+
+const fileClient = ClientProxyFactory.create({
+  transport: Transport.RMQ,
+  options: {
+    urls: [process.env.RABBITMQ_URL || 'amqp://guest:guest@localhost:5672'],
+    queue: 'file_queue',
+    queueOptions: { durable: true },
+  },
+});
+
+const s3Client = new S3Client({
+  region: 'us-east-1',
+  endpoint: process.env.MINIO_ENDPOINT || 'http://localhost:9000',
+  forcePathStyle: true,
+  credentials: {
+    accessKeyId: process.env.MINIO_ACCESS_KEY || 'minioadmin',
+    secretAccessKey: process.env.MINIO_SECRET_KEY || 'minioadmin',
+  },
+});
+
+// Export individual activities for Temporal
+export const activities = {
+  getChunksInfo: async (
+    fileKey: FileDownloadWorkflowParams['fileKey'],
+    userId: FileDownloadWorkflowParams['userId'],
+  ) => {
+    const fileKeyRepository = AppDataSource.getRepository(FileKey);
+    const fileChunksRepository = AppDataSource.getRepository(FileChunks);
+    const activities = new FileDownloadActivities(
+        fileKeyRepository,
+        fileChunksRepository
+    );
+    return activities.getChunksInfo(fileKey, userId);
+  },
+
+  downloadChunks: async (
+    fileKey: FileDownloadWorkflowParams['fileKey'],
+    userId: FileDownloadWorkflowParams['userId'],
+    deviceId: FileDownloadWorkflowParams['deviceId'],
+  ) => {
+    const fileKeyRepository = AppDataSource.getRepository(FileKey);
+    const fileChunksRepository = AppDataSource.getRepository(FileChunks);
+    const redisService = new RedisService();
+    const encryptionService = new EncryptionService();
+    
+    const activities = new FileDownloadActivities(
+      fileKeyRepository,
+      fileChunksRepository,
+      redisService,
+      websocketClient,
+      s3Client,
+      authClient,
+      fileClient,
+      encryptionService
+    );
+    
+    return activities.downloadChunks(fileKey, userId, deviceId);
+  }
+};
