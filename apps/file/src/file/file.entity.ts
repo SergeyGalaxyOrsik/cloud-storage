@@ -19,8 +19,8 @@ export class File {
   @Column()
   userId: string;
 
-  @Column()
-  fileKey: string;
+  @Column({ nullable: true })
+  fileKey: string | null;
 
   @CreateDateColumn()
   createdAt: Date;
