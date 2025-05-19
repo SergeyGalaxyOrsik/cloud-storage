@@ -19,7 +19,7 @@ export class File {
   @Column()
   userId: string;
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, type: 'varchar' })
   fileKey: string | null;
 
   @CreateDateColumn()
