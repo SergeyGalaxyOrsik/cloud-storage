@@ -114,6 +114,7 @@ export class FileService {
       createdAt: file.createdAt.toISOString(), // Format the timestamp to ISO string
       isPublic: file.isPublic,
       publicSlug: file.publicSlug || null, // Ensure publicSlug is null if not set
+      fileKey: file.fileKey || '',
     }));
 
     return formattedMetadata;
