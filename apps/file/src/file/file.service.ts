@@ -56,30 +56,30 @@ export class FileService {
     if (!fileMetadata) {
       throw new Error('File not found');
     }
-    console.log('File metadata:', {
-      id: fileMetadata.id,
-      originalName: fileMetadata.originalName,
-      mimeType: fileMetadata.mimeType,
-      size: fileMetadata.size,
-      storagePath: fileMetadata.storagePath,
-    });
+    // console.log('File metadata:', {
+    //   id: fileMetadata.id,
+    //   originalName: fileMetadata.originalName,
+    //   mimeType: fileMetadata.mimeType,
+    //   size: fileMetadata.size,
+    //   storagePath: fileMetadata.storagePath,
+    // });
 
-    // Get file content from storage service
-    console.log('Requesting file content from storage service');
-    const response = await firstValueFrom(
-      this.client.send('storage.read', fileMetadata.storagePath),
-    );
-    console.log('Storage service response received:', {
-      hasBuffer: !!response.buffer,
-      bufferLength: response.buffer?.length,
-    });
+    // // Get file content from storage service
+    // console.log('Requesting file content from storage service');
+    // const response = await firstValueFrom(
+    //   this.client.send('storage.read', fileMetadata.storagePath),
+    // );
+    // console.log('Storage service response received:', {
+    //   hasBuffer: !!response.buffer,
+    //   bufferLength: response.buffer?.length,
+    // });
 
-    // Convert base64 to buffer
-    const buffer = Buffer.from(response.buffer, 'base64');
-    console.log('Buffer created:', {
-      length: buffer.length,
-      isBuffer: Buffer.isBuffer(buffer),
-    });
+    // // Convert base64 to buffer
+    // const buffer = Buffer.from(response.buffer, 'base64');
+    // console.log('Buffer created:', {
+    //   length: buffer.length,
+    //   isBuffer: Buffer.isBuffer(buffer),
+    // });
 
     return fileMetadata;
   }
