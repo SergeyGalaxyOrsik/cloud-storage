@@ -227,7 +227,7 @@ const s3Client = new S3Client({
   forcePathStyle: true,
   credentials: {
     accessKeyId: process.env.MINIO_ACCESS_KEY || 'minioadmin',
-    secretAccessKey: process.env.MINIO_SECRET_KEY || 'minioadmin',
+    secretAccessKey: process.env.MINIO_SECRET_KEY || 'minioadmin123',
   },
 });
 
