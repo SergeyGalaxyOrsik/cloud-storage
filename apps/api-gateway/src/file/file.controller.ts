@@ -95,6 +95,9 @@ export class FileController {
       deviceId,
       req.user.userId,
     );
+
+    const metadata = await firstValueFrom(this.fileClient.send({cmd: 'file.get'}, {fileKey: fileKey}).pipe(timeout(1000)));
+
     const handle = await this.temporalClient.workflow.start(FileDownloadWorkflow, {
         taskQueue: 'file-download',
         workflowId: `download-${uuid()}`,
@@ -106,7 +109,13 @@ export class FileController {
       });
 
     console.log(handle);
-    return response;
+    return {
+      key: response.key,
+      chunksCount: response.chunksCount,
+      originalName: metadata.originalName,
+      mimeType: metadata.mimeType,
+      originalFileSize: metadata.size,
+    };
   }
 
   @Get()

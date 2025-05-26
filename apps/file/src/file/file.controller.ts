@@ -29,8 +29,8 @@ export class FileController {
   }
 
   @MessagePattern({ cmd: 'file.get' })
-  async handleGetFile(@Payload() data: { fileId: string }) {
-    return this.fileService.getFile(data.fileId);
+  async handleGetFile(@Payload() data: { fileKey: string }) {
+    return this.fileService.getFile(data.fileKey);
   }
 
   @MessagePattern({ cmd: 'file.getMetadata' })

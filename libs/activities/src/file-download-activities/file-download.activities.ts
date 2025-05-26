@@ -164,7 +164,7 @@ export class FileDownloadActivities {
           }
         } 
         // If chunk is stored on another device, request it
-        else if (chunkDeviceId !== 'server') {
+        else if (chunkDeviceId !== 'server' && chunkDeviceId !== deviceId) {
           // Check if the source device is online
           const isOnline = await this.redisService?.isOnline(chunkUserId, chunkDeviceId);
           

@@ -49,15 +49,10 @@ export class FileService {
     return saved;
   }
 
-  async getFile(fileId: string): Promise<{
-    buffer: Buffer;
-    filename: string;
-    mimetype: string;
-    size: number;
-  }> {
+  async getFile(fileKey: string): Promise<File> {
     // Get file metadata from database
-    console.log(`Getting file metadata for ID: ${fileId}`);
-    const fileMetadata = await this.fileRepo.findOne({ where: { id: fileId } });
+    // console.log(`Getting file metadata for ID: ${fileId}`);
+    const fileMetadata = await this.fileRepo.findOne({ where: { fileKey: fileKey } });
     if (!fileMetadata) {
       throw new Error('File not found');
     }
@@ -86,12 +81,7 @@ export class FileService {
       isBuffer: Buffer.isBuffer(buffer),
     });
 
-    return {
-      buffer,
-      filename: fileMetadata.originalName,
-      mimetype: fileMetadata.mimeType,
-      size: fileMetadata.size,
-    };
+    return fileMetadata;
   }
 
   async getFilesMetadata(userId: string) {
